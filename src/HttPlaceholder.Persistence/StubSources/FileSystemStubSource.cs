@@ -22,7 +22,6 @@ namespace HttPlaceholder.Persistence.StubSources;
 internal class FileSystemStubSource(
     IFileService fileService,
     IOptionsMonitor<SettingsModel> options,
-    IFileSystemStubCache fileSystemStubCache,
     IDateTime dateTime)
     : BaseWritableStubSource
 {
@@ -52,10 +51,11 @@ internal class FileSystemStubSource(
         var filePath = Path.Combine(path, ConstructStubFilename(stub.Id));
         var contents = JsonConvert.SerializeObject(stub);
         await fileService.WriteAllTextAsync(filePath, contents, cancellationToken);
-        if (string.IsNullOrWhiteSpace(distributionKey))
-        {
-            fileSystemStubCache.AddOrReplaceStub(stub);
-        }
+        // if (string.IsNullOrWhiteSpace(distributionKey))
+        // {
+        //     fileSystemStubCache.AddOrReplaceStub(stub);
+        // }
+        // TODO update cache here
     }
 
     /// <inheritdoc />
@@ -127,10 +127,11 @@ internal class FileSystemStubSource(
         }
 
         await fileService.DeleteFileAsync(filePath, cancellationToken);
-        if (string.IsNullOrWhiteSpace(distributionKey))
-        {
-            fileSystemStubCache.DeleteStub(stubId);
-        }
+        // if (string.IsNullOrWhiteSpace(distributionKey))
+        // {
+        //     fileSystemStubCache.DeleteStub(stubId);
+        // }
+        // TODO update cache
 
         return true;
     }
@@ -180,21 +181,29 @@ internal class FileSystemStubSource(
         CancellationToken cancellationToken = default)
     {
         await EnsureDirectoriesExist(distributionKey, cancellationToken);
-        var result = await fileSystemStubCache.GetOrUpdateStubCacheAsync(distributionKey,
-            cancellationToken);
+        var path = GetStubsFolder(distributionKey);
+        var files = await fileService.GetFilesAsync(path, "*.json", cancellationToken);
+        var result = (await Task.WhenAll(files
+                .Select(filePath => fileService
+                    .ReadAllTextAsync(filePath, cancellationToken))))
+            .Select(JsonConvert.DeserializeObject<StubModel>);
         return result.Select(s => (s, new Dictionary<string, string>()));
+        // TODO read / initialize cache
+        // var result = await fileSystemStubCache.GetOrUpdateStubCacheAsync(distributionKey,
+        //     cancellationToken);
+        // return result.Select(s => (s, new Dictionary<string, string>()));
     }
 
     /// <inheritdoc />
-    public override async Task<(StubModel Stub, Dictionary<string, string> Metadata)?> GetStubAsync(string stubId,
+    public override async Task<(StubModel Stub, Dictionary<string, string> Metadata)?> GetStubAsync(
+        string stubId,
         string distributionKey = null,
         CancellationToken cancellationToken = default)
     {
         await EnsureDirectoriesExist(distributionKey, cancellationToken);
-        var stubs = await fileSystemStubCache.GetOrUpdateStubCacheAsync(distributionKey,
-            cancellationToken);
-        var result = stubs.FirstOrDefault(s => s.Id == stubId);
-        return result != null ? (result, new Dictionary<string, string>()) : null;
+        var stubs = await GetStubsAsync(distributionKey, cancellationToken);
+        var result = stubs.FirstOrDefault(s => s.Stub.Id == stubId);
+        return result.Stub != null ? (result.Stub, new Dictionary<string, string>()) : null;
     }
 
     /// <inheritdoc />
@@ -337,7 +346,8 @@ internal class FileSystemStubSource(
     {
         await CreateDirectoryIfNotExistsAsync(GetRootFolder(), cancellationToken);
         await EnsureDirectoriesExist(null, cancellationToken);
-        await fileSystemStubCache.GetOrUpdateStubCacheAsync(null, cancellationToken);
+        // await fileSystemStubCache.GetOrUpdateStubCacheAsync(null, cancellationToken);
+        await GetStubsAsync(null, cancellationToken);
     }
 
     private async Task EnsureDirectoriesExist(string distributionKey = null,
