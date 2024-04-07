@@ -139,7 +139,7 @@ internal class FileSystemStubCache(
         return path;
     }
 
-    private FileStorageMetadataModel UpdateMetadata(string path)
+    private FileStorageMetadataModel  UpdateMetadata(string path)
     {
         FileStorageMetadataModel model;
         lock (_cacheUpdateLock)

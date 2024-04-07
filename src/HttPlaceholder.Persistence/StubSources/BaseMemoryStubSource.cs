@@ -18,25 +18,26 @@ namespace HttPlaceholder.Persistence.StubSources;
 /// </summary>
 public abstract class BaseMemoryStubSource(IOptionsMonitor<SettingsModel> options) : BaseWritableStubSource
 {
+    internal string StubUpdateTrackingId;
+
     /// <summary>
     ///     Gets the options monitor.
     /// </summary>
     protected IOptionsMonitor<SettingsModel> Options => options;
+
     private readonly ConcurrentDictionary<string, StubRequestCollectionItem> _collectionItems = new();
 
     /// <inheritdoc />
-    public override Task<IEnumerable<(StubModel Stub, Dictionary<string, string> Metadata)>> GetStubsAsync(
-        string distributionKey = null, CancellationToken cancellationToken = default)
-    {
-        var collection = GetCollection(distributionKey);
-        lock (collection.Lock)
-        {
-            // We need to convert the list to an array here, or else we can get errors when deleting the stubs.
-            return collection.StubModels
-                .Select(s => (s, new Dictionary<string, string>()))
-                .ToArray().AsEnumerable().AsTask();
-        }
-    }
+    public override async Task<IEnumerable<(StubModel Stub, Dictionary<string, string> Metadata)>> GetStubsAsync(
+        string distributionKey = null, CancellationToken cancellationToken = default) =>
+        await ExecuteLocked(distributionKey,
+            collection =>
+            {
+                // We need to convert the list to an array here, or else we can get errors when deleting the stubs.
+                return collection.StubModels
+                    .Select(s => (s, new Dictionary<string, string>()))
+                    .ToArray().AsEnumerable().AsTask();
+            }, cancellationToken);
 
     /// <inheritdoc />
     public override async Task<IEnumerable<(StubOverviewModel Stub, Dictionary<string, string> Metadata)>>
@@ -62,89 +63,86 @@ public abstract class BaseMemoryStubSource(IOptionsMonitor<SettingsModel> option
         Task.CompletedTask;
 
     /// <inheritdoc />
-    public override Task AddStubAsync(StubModel stub, string distributionKey = null,
-        CancellationToken cancellationToken = default)
-    {
-        var item = GetCollection(distributionKey);
-        lock (item.Lock)
-        {
-            item.StubModels.Add(stub);
-            return Task.CompletedTask;
-        }
-    }
+    public override async Task AddStubAsync(StubModel stub, string distributionKey = null,
+        CancellationToken cancellationToken = default) =>
+        await ExecuteLocked(
+            distributionKey,
+            async collection =>
+            {
+                collection.StubModels.Add(stub);
+                await UpdateStubTrackingMetadata(collection.Key, cancellationToken);
+                return true;
+            },
+            cancellationToken);
 
     /// <inheritdoc />
-    public override Task<bool> DeleteStubAsync(string stubId, string distributionKey = null,
-        CancellationToken cancellationToken = default)
-    {
-        var item = GetCollection(distributionKey);
-        lock (item.Lock)
-        {
-            var stub = item.StubModels.FirstOrDefault(s => s.Id == stubId);
-            if (stub == null)
+    public override async Task<bool> DeleteStubAsync(string stubId, string distributionKey = null,
+        CancellationToken cancellationToken = default) =>
+        await ExecuteLocked(
+            distributionKey,
+            collection =>
             {
-                return false.AsTask();
-            }
-
-            item.StubModels.Remove(stub);
-            return true.AsTask();
-        }
-    }
-
-    /// <inheritdoc />
-    public override Task AddRequestResultAsync(RequestResultModel requestResult, ResponseModel responseModel,
-        string distributionKey = null,
-        CancellationToken cancellationToken = default)
-    {
-        var item = GetCollection(distributionKey);
-        lock (item.Lock)
-        {
-            if (responseModel != null)
-            {
-                requestResult.HasResponse = true;
-                item.StubResponses.Add(responseModel);
-                item.RequestResponseMap.Add(requestResult, responseModel);
-            }
-
-            item.RequestResultModels.Add(requestResult);
-            return Task.CompletedTask;
-        }
-    }
-
-    /// <inheritdoc />
-    public override Task<IEnumerable<RequestResultModel>> GetRequestResultsAsync(PagingModel pagingModel,
-        string distributionKey = null,
-        CancellationToken cancellationToken = default)
-    {
-        var item = GetCollection(distributionKey);
-        lock (item.Lock)
-        {
-            var result = item.RequestResultModels.OrderByDescending(r => r.RequestBeginTime).ToArray();
-            if (pagingModel != null)
-            {
-                IEnumerable<RequestResultModel> resultQuery = result;
-                if (!string.IsNullOrWhiteSpace(pagingModel.FromIdentifier))
+                var stub = collection.StubModels.FirstOrDefault(s => s.Id == stubId);
+                if (stub == null)
                 {
-                    var index = result
-                        .Select((request, index) => new { request, index })
-                        .Where(f => f.request.CorrelationId.Equals(pagingModel.FromIdentifier))
-                        .Select(f => f.index)
-                        .FirstOrDefault();
-                    resultQuery = result
-                        .Skip(index);
+                    return false.AsTask();
                 }
 
-                if (pagingModel.ItemsPerPage.HasValue)
+                collection.StubModels.Remove(stub);
+                return true.AsTask();
+            }, cancellationToken);
+
+    /// <inheritdoc />
+    public override async Task AddRequestResultAsync(RequestResultModel requestResult, ResponseModel responseModel,
+        string distributionKey = null,
+        CancellationToken cancellationToken = default) =>
+        await ExecuteLocked(
+            distributionKey,
+            collection =>
+            {
+                if (responseModel != null)
                 {
-                    resultQuery = resultQuery.Take(pagingModel.ItemsPerPage.Value);
+                    requestResult.HasResponse = true;
+                    collection.StubResponses.Add(responseModel);
+                    collection.RequestResponseMap.Add(requestResult, responseModel);
                 }
 
-                result = resultQuery.ToArray();
-            }
+                collection.RequestResultModels.Add(requestResult);
+                return true.AsTask();
+            }, cancellationToken);
 
-            return result.AsEnumerable().AsTask();
-        }
-    }
+    /// <inheritdoc />
+    public override async Task<IEnumerable<RequestResultModel>> GetRequestResultsAsync(PagingModel pagingModel,
+        string distributionKey = null,
+        CancellationToken cancellationToken = default) =>
+        await ExecuteLocked(distributionKey,
+            collection =>
+            {
+                var result = collection.RequestResultModels.OrderByDescending(r => r.RequestBeginTime).ToArray();
+                if (pagingModel != null)
+                {
+                    IEnumerable<RequestResultModel> resultQuery = result;
+                    if (!string.IsNullOrWhiteSpace(pagingModel.FromIdentifier))
+                    {
+                        var index = result
+                            .Select((request, index) => new { request, index })
+                            .Where(f => f.request.CorrelationId.Equals(pagingModel.FromIdentifier))
+                            .Select(f => f.index)
+                            .FirstOrDefault();
+                        resultQuery = result
+                            .Skip(index);
+                    }
+
+                    if (pagingModel.ItemsPerPage.HasValue)
+                    {
+                        resultQuery = resultQuery.Take(pagingModel.ItemsPerPage.Value);
+                    }
+
+                    result = resultQuery.ToArray();
+                }
+
+                return result.AsEnumerable().AsTask();
+            }, cancellationToken);
 
     /// <inheritdoc />
     public override Task<RequestResultModel> GetRequestAsync(string correlationId, string distributionKey = null,
@@ -169,58 +167,59 @@ public abstract class BaseMemoryStubSource(IOptionsMonitor<SettingsModel> option
     }
 
     /// <inheritdoc />
-    public override Task DeleteAllRequestResultsAsync(string distributionKey = null,
-        CancellationToken cancellationToken = default)
-    {
-        var item = GetCollection(distributionKey);
-        lock (item.Lock)
-        {
-            item.RequestResultModels.Clear();
-            item.StubResponses.Clear();
-            item.RequestResponseMap.Clear();
-            return Task.CompletedTask;
-        }
-    }
+    public override async Task DeleteAllRequestResultsAsync(string distributionKey = null,
+        CancellationToken cancellationToken = default) =>
+        await ExecuteLocked(distributionKey,
+            collection =>
+            {
+                collection.RequestResultModels.Clear();
+                collection.StubResponses.Clear();
+                collection.RequestResponseMap.Clear();
+                return true.AsTask();
+            }, cancellationToken);
 
     /// <inheritdoc />
-    public override Task<bool> DeleteRequestAsync(string correlationId, string distributionKey = null,
-        CancellationToken cancellationToken = default)
-    {
-        var item = GetCollection(distributionKey);
-        lock (item.Lock)
-        {
-            var request = item.RequestResultModels.FirstOrDefault(r => r.CorrelationId == correlationId);
-            if (request == null)
+    public override async Task<bool> DeleteRequestAsync(string correlationId, string distributionKey = null,
+        CancellationToken cancellationToken = default) =>
+        await ExecuteLocked(distributionKey,
+            collection =>
             {
-                return false.AsTask();
-            }
-
-            item.RequestResultModels.Remove(request);
-            RemoveResponse(request, distributionKey);
-            return true.AsTask();
-        }
-    }
-
-    /// <inheritdoc />
-    public override Task CleanOldRequestResultsAsync(CancellationToken cancellationToken = default)
-    {
-        foreach (var item in _collectionItems)
-        {
-            lock (item.Value.Lock)
-            {
-                var maxLength = options.CurrentValue.Storage?.OldRequestsQueueLength ?? 40;
-                var requests = item.Value.RequestResultModels
-                    .OrderByDescending(r => r.RequestEndTime)
-                    .Skip(maxLength);
-                foreach (var request in requests)
+                var request = collection.RequestResultModels.FirstOrDefault(r => r.CorrelationId == correlationId);
+                if (request == null)
                 {
-                    item.Value.RequestResultModels.Remove(request);
-                    RemoveResponse(request, null);
+                    return false.AsTask();
                 }
+
+                collection.RequestResultModels.Remove(request);
+                RemoveResponse(request, distributionKey);
+                return true.AsTask();
+            }, cancellationToken);
+
+    /// <inheritdoc />
+    public override async Task CleanOldRequestResultsAsync(CancellationToken cancellationToken = default)
+    {
+        var distributionKeys = _collectionItems.Select(i => i.Key);
+        var maxLength = options.CurrentValue.Storage?.OldRequestsQueueLength ?? 40;
+        foreach (var key in distributionKeys)
+        {
+            foreach (var item in _collectionItems)
+            {
+                await ExecuteLocked(key,
+                    _ =>
+                    {
+                        var requests = item.Value.RequestResultModels
+                            .OrderByDescending(r => r.RequestEndTime)
+                            .Skip(maxLength);
+                        foreach (var request in requests)
+                        {
+                            item.Value.RequestResultModels.Remove(request);
+                            RemoveResponse(request, null);
+                        }
+
+                        return true.AsTask();
+                    }, cancellationToken);
             }
         }
-
-        return Task.CompletedTask;
     }
 
     /// <inheritdoc />
@@ -296,6 +295,30 @@ public abstract class BaseMemoryStubSource(IOptionsMonitor<SettingsModel> option
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    ///     This method updates the stub update tracking ID for the stub source.
+    /// </summary>
+    /// <param name="distributionKey">The distribution key.</param>
+    /// <param name="stubUpdateTrackingId">The update tracking ID.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    protected abstract Task SaveStubTrackingMetadataAsync(
+        string distributionKey,
+        string stubUpdateTrackingId,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    ///     This method updates the stub tracking metadata. It is used, when running HttPlaceholder as multiple instances,
+    ///     to be able to signal the different instances if the cache has been updated and needs to be cleared.
+    /// </summary>
+    private async Task UpdateStubTrackingMetadata(string distributionKey, CancellationToken cancellationToken) =>
+        await ExecuteLocked(distributionKey, async collection =>
+        {
+            var id = Guid.NewGuid().ToString();
+            StubUpdateTrackingId = id;
+            await SaveStubTrackingMetadataAsync(collection.Key, id, cancellationToken);
+            return true;
+        }, cancellationToken);
+
     private void RemoveResponse(RequestResultModel request, string distributionKey)
     {
         var item = GetCollection(distributionKey);
@@ -317,11 +340,29 @@ public abstract class BaseMemoryStubSource(IOptionsMonitor<SettingsModel> option
     internal StubRequestCollectionItem GetCollection(string distributionKey) =>
         _collectionItems.GetOrAdd(distributionKey ?? string.Empty,
             key => new StubRequestCollectionItem(key));
+
+    private async Task<T> ExecuteLocked<T>(
+        string distributionKey,
+        Func<StubRequestCollectionItem, Task<T>> func,
+        CancellationToken cancellationToken)
+    {
+        var collection = GetCollection(distributionKey);
+        var semaphore = collection.Lock;
+        await semaphore.WaitAsync(cancellationToken);
+        try
+        {
+            return await func(collection);
+        }
+        finally
+        {
+            semaphore.Release();
+        }
+    }
 }
 
 internal class StubRequestCollectionItem
 {
-    public readonly object Lock = new();
+    public readonly SemaphoreSlim Lock = new(1, 1);
 
     public readonly IDictionary<RequestResultModel, ResponseModel> RequestResponseMap =
         new Dictionary<RequestResultModel, ResponseModel>();

@@ -1,16 +1,12 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using HttPlaceholder.Application.Configuration.Models;
-using HttPlaceholder.Application.StubExecution.Models;
 using HttPlaceholder.Common;
 using HttPlaceholder.Common.Utilities;
 using HttPlaceholder.Domain;
-using HttPlaceholder.Domain.Entities;
-using HttPlaceholder.Persistence.FileSystem;
 using Microsoft.Extensions.Options;
 using Newtonsoft.Json;
 
@@ -25,10 +21,6 @@ internal class FileSystemStubSource(
     IDateTime dateTime)
     : BaseMemoryStubSource(options)
 {
-    // TODO
-    // - Als je een stub toevoegt, moet de cache worden bijgewerkt en moet er een nieuw stub tracking ID worden ingesteld.
-    // - Als de stub is bijgewerkt buiten de API om en de stub tracking ID is gewijzigd, moet de cache opnieuw opgebouwd worden. Dit gebeurt wanneer je de "get stubs" methode aanroept.
-
     /// <inheritdoc />
     public override async Task AddRequestResultAsync(RequestResultModel requestResult, ResponseModel responseModel,
         string distributionKey = null,
@@ -49,6 +41,9 @@ internal class FileSystemStubSource(
     public override async Task AddStubAsync(StubModel stub, string distributionKey = null,
         CancellationToken cancellationToken = default)
     {
+        // TODO
+        // - Als je een stub toevoegt, moet de cache worden bijgewerkt en moet er een nieuw stub tracking ID worden ingesteld.
+        // - Als de stub is bijgewerkt buiten de API om en de stub tracking ID is gewijzigd, moet de cache opnieuw opgebouwd worden. Dit gebeurt wanneer je de "get stubs" methode aanroept.
         await EnsureDirectoriesExist(distributionKey, cancellationToken);
 
         var path = GetStubsFolder(distributionKey);
@@ -114,6 +109,10 @@ internal class FileSystemStubSource(
         await fileService.DeleteFileAsync(requestFilePath, cancellationToken);
         return true;
     }
+
+    protected override Task SaveStubTrackingMetadataAsync(string distributionKey, string stubUpdateTrackingId,
+        CancellationToken cancellationToken) =>
+        throw new NotImplementedException();
 
     // /// <inheritdoc />
     // public override async Task<bool> DeleteStubAsync(string stubId, string distributionKey = null,
