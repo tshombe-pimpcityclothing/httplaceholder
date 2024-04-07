@@ -16,8 +16,12 @@ namespace HttPlaceholder.Persistence.StubSources;
 /// <summary>
 ///     An abstract class that acts as a base for a stub where the data (or a part of the data) is saved in memory.
 /// </summary>
-public class BaseMemoryStubSource(IOptionsMonitor<SettingsModel> options) : BaseWritableStubSource
+public abstract class BaseMemoryStubSource(IOptionsMonitor<SettingsModel> options) : BaseWritableStubSource
 {
+    /// <summary>
+    ///     Gets the options monitor.
+    /// </summary>
+    protected IOptionsMonitor<SettingsModel> Options => options;
     private readonly ConcurrentDictionary<string, StubRequestCollectionItem> _collectionItems = new();
 
     /// <inheritdoc />
