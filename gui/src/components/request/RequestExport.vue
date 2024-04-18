@@ -13,7 +13,12 @@
       <template v-if="showExportResultText">
         <div class="icon-wrapper">
           <i
-            class="bi bi-clipboard copy"
+            class="bi copy"
+            :class="{
+              'bi-clipboard': !copied,
+              copied: copied,
+              'bi-check': copied,
+            }"
             title="Copy command to clipboard"
             @click="copy"
           ></i>
@@ -59,6 +64,8 @@ export default defineComponent({
     // Data
     const exportType = ref(RequestExportType.NotSet);
     const exportResult = ref("");
+    const copied = ref(false);
+    let copiedTimeout: number = 0;
 
     // Computed
     const language = computed(() => {
@@ -106,6 +113,12 @@ export default defineComponent({
     const copy = async () => {
       if (exportResult.value) {
         await copyTextToClipboard(exportResult.value);
+        copied.value = true;
+        if (copiedTimeout) {
+          clearTimeout(copiedTimeout);
+        }
+
+        copiedTimeout = setTimeout(() => (copied.value = false), 2000);
       }
     };
     const download = async () => {
@@ -129,6 +142,7 @@ export default defineComponent({
       copy,
       showExportResultText,
       download,
+      copied,
     };
   },
 });
@@ -148,6 +162,10 @@ export default defineComponent({
 
     .copy {
       cursor: pointer;
+
+      &.copied {
+        color: green;
+      }
     }
   }
 }
