@@ -82,6 +82,11 @@
     overflow: hidden;
   }
 
+  // Badges
+  .badge, .badge strong {
+    color: $gray-900;
+  }
+
   // Other
   .divider {
     border-bottom: 1px solid $gray-400;
