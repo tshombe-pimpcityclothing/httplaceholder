@@ -34,7 +34,7 @@ conditions:
 response:
   text: OK!`,
   downloadStubsHeader:
-    "# This .yml file was created with HttPlaceholder. For more information, go to http://httplaceholder.com.",
+    "# This .yml file was created with HttPlaceholder. For more information, go to https://httplaceholder.org.",
   exampleCurlInput: curl,
   exampleHarInput: har,
   exampleOpenApiInput: openapi,
